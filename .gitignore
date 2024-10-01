@@ -276,4 +276,5 @@ cython_debug/
 hs_err_pid*
 replay_pid*
 
-
+# os generated files
+.DS_Store
