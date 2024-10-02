@@ -1,9 +1,9 @@
 import argparse
-from struco.cfg import extract_ir, extract_cfg_from_ir
+
+from struco.cfg import extract_cfg_from_ir, extract_ir
 
 
-
-def main():
+def main():  # noqa
     parser = argparse.ArgumentParser(description="Extract CFG from a C file")
     parser.add_argument("file_path", type=str, help="Path to the C file")
     args = parser.parse_args()

@@ -4,6 +4,26 @@ import subprocess
 
 
 def extract_c_ir(file_path, output_path=None, file_extension="c"):
+    """Extract LLVM IR from C family source files.
+
+    The function extracts the LLVM IR from C family source files
+    and saves the IR in a .ll file in the same directory as the source file.
+    The function also creates a directory to store the .ll files.
+
+    Parameters
+    ----------
+    file_path : str
+        The path to the source file
+    output_path : str, optional
+        The path to the directory where the .ll file will be saved
+    file_extension : str, optional
+        The extension of the source file, now support c, cpp and cxx
+
+    Returns
+    -------
+    ret : tuple
+        The path to the .ll file, and the extension of the source file
+    """
     if not os.path.exists(file_path):
         print("File does not exist")
         return None
@@ -44,6 +64,24 @@ def extract_c_ir(file_path, output_path=None, file_extension="c"):
 
 
 def extract_py_ir(file_path, output_path=None):
+    """Extract LLVM IR from Python source files.
+
+    The function extracts the LLVM IR from Python source files
+    and saves the IR in a .ll file in the same directory as the source file.
+    The function also creates a directory to store the .ll files.
+
+    Parameters
+    ----------
+    file_path : str
+        The path to the source file
+    output_path : str, optional
+        The path to the directory where the .ll file will be saved
+
+    Returns
+    -------
+    ret : tuple
+        The path to the .ll file, and the extension of the source file
+    """
     if not os.path.exists(file_path):
         raise FileNotFoundError("File does not exist")
     ir_cmd = f"codon build -release -llvm {file_path}"
@@ -78,6 +116,22 @@ def extract_py_ir(file_path, output_path=None):
 
 
 def extract_ir(file_path, output_path=None):
+    """Extract LLVM IR from source files.
+
+    The function extracts the LLVM IR from source files
+
+    Parameters
+    ----------
+    file_path : str
+        The path to the source file
+    output_path : str, optional
+        The path to the directory where the .ll file will be saved
+
+    Returns
+    -------
+    ret : tuple
+        The path to the .ll file, and the extension of the source file
+    """
     file_extension = file_path.split(".")[-1]
     if file_extension == "c":
         return extract_c_ir(file_path, output_path=output_path, file_extension="c")
@@ -90,6 +144,24 @@ def extract_ir(file_path, output_path=None):
 
 
 def get_function_names_for_dot_cfg(ir_file_path, source_file_extension="c"):
+    """Extract function names from the IR file.
+
+    The function extracts function names from the IR file and creates a list
+    of .dot files for each function name.
+
+    Parameters
+    ----------
+    ir_file_path : str
+        The path to the IR file
+    source_file_extension : str, default="c"
+        The extension of the source file, now support c, cpp and cxx
+
+    Returns
+    -------
+    ret : list
+        A list of .dot files for each function name
+
+    """
     if not os.path.exists(ir_file_path):
         print("File does not exist")
         return None
@@ -110,9 +182,30 @@ def get_function_names_for_dot_cfg(ir_file_path, source_file_extension="c"):
 
 
 def extract_cfg_from_ir(ir_file_path, file_option="png", source_file_extension="c"):
+    """Extract CFG from IR file.
+
+    The function extracts CFG from the IR file and saves the CFG in .dot files
+    in a directory named after the IR file. The function also creates a directory
+    to store the .dot files. The .dot files are then converted to .png or .pdf
+    files based on the file_option.
+
+    Parameters
+    ----------
+    ir_file_path : str
+        The path to the IR file
+    file_option : str, default="png"
+        The file format to save the CFG, either "png" or "pdf"
+    source_file_extension : str, default="c"
+        The extension of the source file, now support c, cpp and cxx
+
+    Returns
+    -------
+    ret : list
+        A list of .dot files for each function name
+    """
     if not os.path.exists(ir_file_path):
         print("File does not exist")
-        return None
+        return
 
     # Use the full path to the IR file
     cmd = ["opt", "-passes=dot-cfg", "-disable-output", ir_file_path]
@@ -125,11 +218,11 @@ def extract_cfg_from_ir(ir_file_path, file_option="png", source_file_extension="
 
         if stderr and not all("Writing" in line for line in stderr.splitlines()):
             print("Error:", stderr)
-            return None
+            return
 
     except Exception as e:
         print(f"Exception occurred: {e}")
-        return None
+        return
 
     try:
         # Use the full path to the directory
@@ -154,11 +247,29 @@ def extract_cfg_from_ir(ir_file_path, file_option="png", source_file_extension="
 
     except Exception as e:
         print(f"Exception occurred: {e}")
-        return None
-    return function_names
+        return
+    return
 
 
 def convert_cfg_to_png_pdf(final_cfg_files_dir, dot_file, file_option="png"):
+    """Convert .dot files to .png or .pdf files.
+
+    The function converts the .dot files to .png or .pdf files based on the
+    file_option.
+
+    Parameters
+    ----------
+    final_cfg_files_dir : str
+        The path to the directory to save the .png or .pdf files
+    dot_file : str
+        The path to the .dot file
+    file_option : str, default="png"
+        The file format to save the CFG, either "png" or "pdf"
+
+    Returns
+    -------
+    None
+    """
     try:
         if file_option == "png":
             png_file = os.path.join(
