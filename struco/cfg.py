@@ -168,10 +168,12 @@ def get_function_names_for_dot_cfg(ir_file_path, source_file_extension="c"):
     if source_file_extension == "c":
         function_pattern_c = re.compile(r"define\s+\w+\s+@(\w+)\s*\(")
     if source_file_extension in ["cpp", "cxx"]:
-        pattern = r"""define\s+(?:(?:internal|private|available_externally|
-        linkonce|weak|common|appending|extern_weak|linkonce_odr|weak_odr|
-        external)\s+)?(?:(?:dso_local|dso_preemptable)\s+)?(?:\w+\s+)*@([\w$.]+)
-        \s*\([^)]*\)(?:\s*(?:#\d+|![^\n]+|\{\s*[^}]*\}|\[[^\]]+\]|\w+\s*\([^)]*\)))*"""
+        pattern = (
+            r"""define\s+(?:(?:internal|private|available_externally|linkonce"""
+            r"""|weak|common|appending|extern_weak|linkonce_odr|weak_odr|external)"""
+            r"""\s+)?(?:(?:dso_local|dso_preemptable)\s+)?(?:\w+\s+)*@([\w$.]+)\s*\("""
+            r"""[^)]*\)(?:\s*(?:#\d+|![^\n]+|\{\s*[^}]*\}|\[[^\]]+\]|\w+\s*\([^)]*\)))*"""
+        )
         function_pattern_c = re.compile(pattern)
     if source_file_extension == "py":
         function_pattern_c = re.compile(r"define\s+\w+\s+@(\w+)\s*\(")
