@@ -14,6 +14,8 @@ def main():  # noqa
     )
     args = parser.parse_args()
     ir_file_path, source_extension = extract_ir(args.file_path)
+    if args.cfg_format.lower() not in ["png", "pdf"]:
+        raise ValueError("Invalid cfg format. Must be either png or pdf")
     if ir_file_path:
         extract_cfg_from_ir(
             ir_file_path,

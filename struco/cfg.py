@@ -133,13 +133,14 @@ def extract_ir(file_path, output_path=None):
         The path to the .ll file, and the extension of the source file
     """
     file_extension = file_path.split(".")[-1]
+    if file_extension not in ["c", "cpp", "cxx", "py"]:
+        raise ValueError("Invalid file extension. Must be either c, cpp, cxx or py")
     if file_extension == "c":
         return extract_c_ir(file_path, output_path=output_path, file_extension="c")
     if file_extension in ["cpp", "cxx"]:
         return extract_c_ir(file_path, output_path=output_path, file_extension="cpp")
     if file_extension == "py":
         return extract_py_ir(file_path, output_path)
-    print("Unsupported file type")
     return None
 
 
