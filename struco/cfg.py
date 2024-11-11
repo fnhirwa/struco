@@ -3,7 +3,7 @@ import re
 import subprocess
 
 
-def extract_c_ir(file_path, output_path=None, file_extension="c"):
+def extract_c_ir(file_path, file_extension="c"):
     """Extract LLVM IR from C family source files.
 
     The function extracts the LLVM IR from C family source files
@@ -14,8 +14,6 @@ def extract_c_ir(file_path, output_path=None, file_extension="c"):
     ----------
     file_path : str
         The path to the source file
-    output_path : str, optional
-        The path to the directory where the .ll file will be saved
     file_extension : str, optional
         The extension of the source file, now support c, cpp and cxx
 
@@ -33,11 +31,8 @@ def extract_c_ir(file_path, output_path=None, file_extension="c"):
         ir_cmd = f"clang++ -S -emit-llvm -Xclang -disable-O0-optnone {file_path}"
     file_name = file_path.split("/")[-1]
     output_file = file_name.split(".")[0] + ".ll"
-    if output_path:
-        output_file = output_path + "/" + output_file
-    else:
-        file_path, file_extension = file_path.split(".")
-        output_file = f"{file_path}_{file_extension}.ll"
+    file_path, file_extension = file_path.split(".")
+    output_file = f"{file_path}_{file_extension}.ll"
 
     ir_cmd += " -o " + output_file
 
@@ -52,10 +47,7 @@ def extract_c_ir(file_path, output_path=None, file_extension="c"):
     # create a directory for .ll files
     source_file_dir_name = os.path.dirname(file_path)
     source_file_name = os.path.basename(file_path)
-    if output_path is None:
-        ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
-    else:
-        ll_file_dir_name = f"{source_file_name.split(".")[0]}_{file_extension}_ll_files"
+    ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
     ll_files_dir = os.path.join(source_file_dir_name, ll_file_dir_name)
     os.makedirs(ll_files_dir, exist_ok=True)
     # move the output_file to ll_files_dir
@@ -65,7 +57,7 @@ def extract_c_ir(file_path, output_path=None, file_extension="c"):
     return str(new_out_file), file_extension
 
 
-def extract_py_ir(file_path, output_path=None):
+def extract_py_ir(file_path):
     """Extract LLVM IR from Python source files.
 
     The function extracts the LLVM IR from Python source files
@@ -76,8 +68,6 @@ def extract_py_ir(file_path, output_path=None):
     ----------
     file_path : str
         The path to the source file
-    output_path : str, optional
-        The path to the directory where the .ll file will be saved
 
     Returns
     -------
@@ -89,11 +79,8 @@ def extract_py_ir(file_path, output_path=None):
     ir_cmd = f"codon build -release -llvm {file_path}"
     file_name = file_path.split("/")[-1]
     output_file = file_name.split(".")[0] + ".ll"
-    if output_path:
-        output_file = output_path + "/" + output_file
-    else:
-        file_path, file_extension = file_path.split(".")
-        output_file = f"{file_path}_{file_extension}.ll"
+    file_path, file_extension = file_path.split(".")
+    output_file = f"{file_path}_{file_extension}.ll"
     ir_cmd += " -o " + output_file
 
     ir_process = subprocess.Popen(
@@ -106,11 +93,7 @@ def extract_py_ir(file_path, output_path=None):
     # create a directory for ll files
     source_file_dir_name = os.path.dirname(file_path)
     source_file_name = os.path.basename(file_path)
-    if output_path is None:
-        ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
-    else:
-        file_extension = file_path.split(".")[-1]
-        ll_file_dir_name = f"{source_file_name.split(".")[0]}_{file_extension}_ll_files"
+    ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
     ll_files_dir = os.path.join(source_file_dir_name, ll_file_dir_name)
     os.makedirs(ll_files_dir, exist_ok=True)
     # move the output_file to ll_files_dir
@@ -120,7 +103,7 @@ def extract_py_ir(file_path, output_path=None):
     return str(new_out_file), file_extension
 
 
-def extract_ir(file_path, output_path=None):
+def extract_ir(file_path):
     """Extract LLVM IR from source files.
 
     The function extracts the LLVM IR from source files
@@ -129,8 +112,6 @@ def extract_ir(file_path, output_path=None):
     ----------
     file_path : str
         The path to the source file
-    output_path : str, optional
-        The path to the directory where the .ll file will be saved
 
     Returns
     -------
@@ -141,11 +122,11 @@ def extract_ir(file_path, output_path=None):
     if file_extension not in ["c", "cpp", "cxx", "py"]:
         raise ValueError("Invalid file extension. Must be either c, cpp, cxx or py")
     if file_extension == "c":
-        return extract_c_ir(file_path, output_path=output_path, file_extension="c")
+        return extract_c_ir(file_path, file_extension="c")
     if file_extension in ["cpp", "cxx"]:
-        return extract_c_ir(file_path, output_path=output_path, file_extension="cpp")
+        return extract_c_ir(file_path, file_extension="cpp")
     if file_extension == "py":
-        return extract_py_ir(file_path, output_path)
+        return extract_py_ir(file_path)
     return None
 
 
