@@ -49,11 +49,13 @@ def extract_c_ir(file_path, output_path=None, file_extension="c"):
     if stderr_ir:
         print("Error: ", stderr_ir)
         return None
-    # create a directory for ll files
+    # create a directory for .ll files
     source_file_dir_name = os.path.dirname(file_path)
     source_file_name = os.path.basename(file_path)
-
-    ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
+    if output_path is None:
+        ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
+    else:
+        ll_file_dir_name = f"{source_file_name.split(".")[0]}_{file_extension}_ll_files"
     ll_files_dir = os.path.join(source_file_dir_name, ll_file_dir_name)
     os.makedirs(ll_files_dir, exist_ok=True)
     # move the output_file to ll_files_dir
@@ -104,8 +106,11 @@ def extract_py_ir(file_path, output_path=None):
     # create a directory for ll files
     source_file_dir_name = os.path.dirname(file_path)
     source_file_name = os.path.basename(file_path)
-
-    ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
+    if output_path is None:
+        ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
+    else:
+        file_extension = file_path.split(".")[-1]
+        ll_file_dir_name = f"{source_file_name.split(".")[0]}_{file_extension}_ll_files"
     ll_files_dir = os.path.join(source_file_dir_name, ll_file_dir_name)
     os.makedirs(ll_files_dir, exist_ok=True)
     # move the output_file to ll_files_dir
