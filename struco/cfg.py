@@ -118,6 +118,7 @@ def extract_ir(file_path):
     ret : tuple
         The path to the .ll file, and the extension of the source file
     """
+    file_path = os.path.abspath(file_path)
     file_extension = file_path.split(".")[-1]
     if file_extension not in ["c", "cpp", "cxx", "py"]:
         raise ValueError("Invalid file extension. Must be either c, cpp, cxx or py")
