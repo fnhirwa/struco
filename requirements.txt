@@ -1,0 +1,27 @@
+# Core
+llvmlite>=0.43.0
+graphviz
+networkx
+
+# AST
+tree-sitter>=0.23.0
+tree-sitter-c
+tree-sitter-cpp
+tree-sitter-python
+
+# Embeddings
+transformers
+torch
+
+# Evaluation
+scikit-learn
+rouge-score
+nltk  # for BLEU
+
+# PDG (external)
+# Joern — installed separately via install script
+
+# Dev
+pytest
+ruff
+pre-commit

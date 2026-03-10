@@ -1,293 +1,435 @@
+"""IR extraction and CFG generation from C/C++ and Python source files.
+
+Uses Clang for C/C++, Codon for Python. Generates LLVM IR and extracts
+Control Flow Graphs via LLVM's opt tool.
+"""
+
+from __future__ import annotations
+
+import logging
 import os
 import re
 import subprocess
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
-def extract_c_ir(file_path, file_extension="c"):
-    """Extract LLVM IR from C family source files.
+class Language(Enum):
+    """Supported source languages."""
 
-    The function extracts the LLVM IR from C family source files
-    and saves the IR in a .ll file in the same directory as the source file.
-    The function also creates a directory to store the .ll files.
+    C = "c"
+    CPP = "cpp"
+    CXX = "cxx"
+    PYTHON = "py"
+
+
+EXTENSION_TO_LANGUAGE: dict[str, Language] = {
+    "c": Language.C,
+    "cpp": Language.CPP,
+    "cxx": Language.CXX,
+    "py": Language.PYTHON,
+}
+
+# Languages that use the C-family frontend (Clang)
+_C_FAMILY = {Language.C, Language.CPP, Language.CXX}
+
+
+@dataclass(frozen=True)
+class IRResult:
+    """Result of IR extraction.
+
+    Attributes
+    ----------
+    ir_path : Path
+        Absolute path to the generated .ll file.
+    language : Language
+        The source language that produced this IR.
+    """
+
+    ir_path: Path
+    language: Language
+
+
+@dataclass(frozen=True)
+class FrontendConfig:
+    """Configuration for a compiler frontend.
+
+    Attributes
+    ----------
+    command : str
+        The compiler executable name.
+    args : list[str]
+        Arguments to emit LLVM IR.
+    """
+
+    command: str
+    args: list[str]
+
+
+def _get_frontend_config(language: Language) -> FrontendConfig:
+    """Return the compiler command and flags for a given language.
 
     Parameters
     ----------
-    file_path : str
-        The path to the source file
-    file_extension : str, optional
-        The extension of the source file, now support c, cpp and cxx
+    language : Language
+        The source language.
 
     Returns
     -------
-    ret : tuple
-        The path to the .ll file, and the extension of the source file
+    FrontendConfig
+        The compiler executable and arguments.
     """
-    if not os.path.exists(file_path):
-        print("File does not exist")
-        return None
-    if file_extension == "c":
-        ir_cmd = f"clang -S -emit-llvm -Xclang -disable-O0-optnone {file_path}"
-    if file_extension in ["cpp", "cxx"]:
-        ir_cmd = f"clang++ -S -emit-llvm -Xclang -disable-O0-optnone {file_path}"
-    file_name = file_path.split("/")[-1]
-    output_file = file_name.split(".")[0] + ".ll"
-    file_path, file_extension = file_path.split(".")
-    output_file = f"{file_path}_{file_extension}.ll"
+    if language == Language.C:
+        return FrontendConfig(
+            command="clang",
+            args=["-S", "-emit-llvm", "-Xclang", "-disable-O0-optnone"],
+        )
+    if language in {Language.CPP, Language.CXX}:
+        return FrontendConfig(
+            command="clang++",
+            args=["-S", "-emit-llvm", "-Xclang", "-disable-O0-optnone"],
+        )
+    if language == Language.PYTHON:
+        return FrontendConfig(
+            command="codon",
+            args=["build", "-release", "-llvm"],
+        )
+    msg = f"Unsupported language: {language}"
+    raise ValueError(msg)
 
-    ir_cmd += " -o " + output_file
 
-    ir_process = subprocess.Popen(
-        ir_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+def _run_frontend(
+    source_path: Path,
+    language: Language,
+) -> IRResult:
+    """Compile a source file to LLVM IR using the appropriate frontend.
+
+    Runs the compiler subprocess, places the .ll output in a dedicated
+    directory alongside the source file, and returns the result.
+
+    Parameters
+    ----------
+    source_path : Path
+        Absolute path to the source file.
+    language : Language
+        The source language.
+
+    Returns
+    -------
+    IRResult
+        Path to the generated IR and the source language.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the source file does not exist.
+    RuntimeError
+        If the compiler subprocess fails.
+    """
+    if not source_path.exists():
+        msg = f"Source file not found: {source_path}"
+        raise FileNotFoundError(msg)
+
+    config = _get_frontend_config(language)
+
+    # Build output path: e.g. /path/to/hello_c.ll
+    stem = source_path.stem
+    ext = source_path.suffix.lstrip(".")
+    output_file = source_path.with_name(f"{stem}_{ext}.ll")
+
+    # Build command
+    cmd: list[str] = [config.command, *config.args, str(source_path), "-o", str(output_file)]
+
+    logger.info("Running frontend: %s", " ".join(cmd))
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    _, stderr_ir = ir_process.communicate()
 
-    if stderr_ir:
-        print("Error: ", stderr_ir)
-        return None
-    # create a directory for .ll files
-    source_file_dir_name = os.path.dirname(file_path)
-    source_file_name = os.path.basename(file_path)
-    ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
-    ll_files_dir = os.path.join(source_file_dir_name, ll_file_dir_name)
-    os.makedirs(ll_files_dir, exist_ok=True)
-    # move the output_file to ll_files_dir
-    file_name = output_file.split("/")[-1]
-    new_out_file = os.path.join(ll_files_dir, file_name)
-    os.rename(output_file, new_out_file)
-    return str(new_out_file), file_extension
+    if result.returncode != 0:
+        logger.error("Frontend stderr: %s", result.stderr)
+        msg = f"Frontend compilation failed for {source_path}: {result.stderr}"
+        raise RuntimeError(msg)
+
+    if result.stderr:
+        logger.warning("Frontend warnings: %s", result.stderr)
+
+    # Move .ll file into a dedicated directory
+    ll_dir = source_path.parent / f"{stem}_{ext}_ll_files"
+    ll_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = ll_dir / output_file.name
+    output_file.rename(dest)
+
+    logger.info("IR written to %s", dest)
+    return IRResult(ir_path=dest, language=language)
 
 
-def extract_py_ir(file_path):
-    """Extract LLVM IR from Python source files.
+def extract_ir(file_path: str | Path) -> IRResult:
+    """Extract LLVM IR from a source file.
 
-    The function extracts the LLVM IR from Python source files
-    and saves the IR in a .ll file in the same directory as the source file.
-    The function also creates a directory to store the .ll files.
+    Dispatches to the appropriate compiler frontend based on file extension.
 
     Parameters
     ----------
-    file_path : str
-        The path to the source file
+    file_path : str or Path
+        Path to the source file (C, C++, or Python).
 
     Returns
     -------
-    ret : tuple
-        The path to the .ll file, and the extension of the source file
-    """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError("File does not exist")
-    ir_cmd = f"codon build -release -llvm {file_path}"
-    file_name = file_path.split("/")[-1]
-    output_file = file_name.split(".")[0] + ".ll"
-    file_path, file_extension = file_path.split(".")
-    output_file = f"{file_path}_{file_extension}.ll"
-    ir_cmd += " -o " + output_file
+    IRResult
+        The path to the generated .ll file and the source language.
 
-    ir_process = subprocess.Popen(
-        ir_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    Raises
+    ------
+    ValueError
+        If the file extension is not supported.
+    FileNotFoundError
+        If the source file does not exist.
+    RuntimeError
+        If compilation fails.
+    """
+    source_path = Path(file_path).resolve()
+    ext = source_path.suffix.lstrip(".")
+
+    language = EXTENSION_TO_LANGUAGE.get(ext)
+    if language is None:
+        supported = ", ".join(sorted(EXTENSION_TO_LANGUAGE.keys()))
+        msg = f"Unsupported file extension '.{ext}'. Supported: {supported}"
+        raise ValueError(msg)
+
+    return _run_frontend(source_path, language)
+
+
+# Regex patterns for extracting function names from LLVM IR
+_FUNC_PATTERN_SIMPLE = re.compile(r"define\s+(?:\w+\s+)*@(\w+)\s*\(")
+
+_FUNC_PATTERN_CPP = re.compile(
+    r"define\s+"
+    r"(?:(?:internal|private|available_externally|linkonce"
+    r"|weak|common|appending|extern_weak|linkonce_odr|weak_odr|external)\s+)?"
+    r"(?:(?:dso_local|dso_preemptable)\s+)?"
+    r"(?:\w+\s+)*"
+    r"@([\w$.]+)\s*\("
+    r"[^)]*\)"
+    r"(?:\s*(?:#\d+|![^\n]+|\{\s*[^}]*\}|\[[^\]]+\]|\w+\s*\([^)]*\)))*"
+)
+
+
+def _get_function_pattern(language: Language) -> re.Pattern[str]:
+    """Return the regex pattern for function definitions in the given language's IR."""
+    if language in {Language.CPP, Language.CXX}:
+        return _FUNC_PATTERN_CPP
+    return _FUNC_PATTERN_SIMPLE
+
+
+def get_function_names(ir_path: Path, language: Language) -> list[str]:
+    """Extract function names defined in an LLVM IR file.
+
+    Parameters
+    ----------
+    ir_path : Path
+        Path to the .ll file.
+    language : Language
+        The source language (affects regex pattern for C++ name mangling).
+
+    Returns
+    -------
+    list[str]
+        Function names found in the IR.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the IR file does not exist.
+    """
+    if not ir_path.exists():
+        msg = f"IR file not found: {ir_path}"
+        raise FileNotFoundError(msg)
+
+    pattern = _get_function_pattern(language)
+    content = ir_path.read_text()
+    functions = pattern.findall(content)
+    logger.info("Found %d functions in %s", len(functions), ir_path.name)
+    return functions
+
+
+def _run_opt(ir_path: Path) -> None:
+    """Run LLVM opt to generate .dot CFG files.
+
+    The opt tool writes .dot files to the current working directory.
+    We run it with cwd set to a temporary location to control output.
+
+    Parameters
+    ----------
+    ir_path : Path
+        Absolute path to the .ll file.
+
+    Raises
+    ------
+    RuntimeError
+        If opt fails.
+    """
+    cmd = ["opt", "-passes=dot-cfg", "-disable-output", str(ir_path)]
+    logger.info("Running opt: %s", " ".join(cmd))
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    _, stderr_ir = ir_process.communicate()
-    if stderr_ir:
-        print("Error: ", stderr_ir)
+
+    # opt writes "Writing '<filename>'..." to stderr on success
+    if result.returncode != 0:
+        logger.error("opt stderr: %s", result.stderr)
+        msg = f"opt failed for {ir_path}: {result.stderr}"
+        raise RuntimeError(msg)
+
+    if result.stderr:
+        non_writing = [line for line in result.stderr.splitlines() if "Writing" not in line]
+        if non_writing:
+            logger.warning("opt warnings: %s", "\n".join(non_writing))
+
+
+def _convert_dot(
+    dot_path: Path,
+    output_dir: Path,
+    fmt: str = "png",
+) -> Path | None:
+    """Convert a .dot file to PNG or PDF using Graphviz dot.
+
+    Parameters
+    ----------
+    dot_path : Path
+        Path to the .dot file.
+    output_dir : Path
+        Directory to write the output image/PDF.
+    fmt : str
+        Output format, either "png" or "pdf".
+
+    Returns
+    -------
+    Path or None
+        Path to the output file, or None if conversion failed.
+    """
+    # .dot filenames from opt look like: .funcname.dot
+    # Extract function name: strip leading dot and .dot extension
+    func_name = dot_path.stem.lstrip(".")
+    output_path = output_dir / f"{func_name}.{fmt}"
+
+    cmd = ["dot", f"-T{fmt}", str(dot_path), "-o", str(output_path)]
+    logger.info("Converting %s -> %s", dot_path.name, output_path.name)
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        logger.error("Graphviz error for %s: %s", dot_path.name, result.stderr)
         return None
-    # create a directory for ll files
-    source_file_dir_name = os.path.dirname(file_path)
-    source_file_name = os.path.basename(file_path)
-    ll_file_dir_name = f"{source_file_name}_{file_extension}_ll_files"
-    ll_files_dir = os.path.join(source_file_dir_name, ll_file_dir_name)
-    os.makedirs(ll_files_dir, exist_ok=True)
-    # move the output_file to ll_files_dir
-    file_name = output_file.split("/")[-1]
-    new_out_file = os.path.join(ll_files_dir, file_name)
-    os.rename(output_file, new_out_file)
-    return str(new_out_file), file_extension
+
+    return output_path
 
 
-def extract_ir(file_path):
-    """Extract LLVM IR from source files.
-
-    The function extracts the LLVM IR from source files
+def extract_cfg_from_ir(
+    ir_path: str | Path,
+    language: Language | str = Language.C,
+    output_format: str = "png",
+) -> list[Path]:
+    """Extract CFGs from an LLVM IR file and render as PNG or PDF.
 
     Parameters
     ----------
-    file_path : str
-        The path to the source file
+    ir_path : str or Path
+        Path to the .ll file.
+    language : Language or str
+        Source language (affects function name extraction).
+    output_format : str
+        Output format: "png" or "pdf".
 
     Returns
     -------
-    ret : tuple
-        The path to the .ll file, and the extension of the source file
+    list[Path]
+        Paths to the generated image/PDF files.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the IR file does not exist.
+    ValueError
+        If output_format is not "png" or "pdf".
+    RuntimeError
+        If opt or graphviz fails.
     """
-    file_path = os.path.abspath(file_path)
-    file_extension = file_path.split(".")[-1]
-    if file_extension not in ["c", "cpp", "cxx", "py"]:
-        raise ValueError("Invalid file extension. Must be either c, cpp, cxx or py")
-    if file_extension == "c":
-        return extract_c_ir(file_path, file_extension="c")
-    if file_extension in ["cpp", "cxx"]:
-        return extract_c_ir(file_path, file_extension="cpp")
-    if file_extension == "py":
-        return extract_py_ir(file_path)
-    return None
+    ir_path = Path(ir_path).resolve()
 
+    if not ir_path.exists():
+        msg = f"IR file not found: {ir_path}"
+        raise FileNotFoundError(msg)
 
-def get_function_names_for_dot_cfg(ir_file_path, source_file_extension="c"):
-    """Extract function names from the IR file.
+    output_format = output_format.lower()
+    if output_format not in {"png", "pdf"}:
+        msg = f"Invalid output format '{output_format}'. Must be 'png' or 'pdf'."
+        raise ValueError(msg)
 
-    The function extracts function names from the IR file and creates a list
-    of .dot files for each function name.
+    # Normalize language to enum
+    if isinstance(language, str):
+        language = EXTENSION_TO_LANGUAGE.get(language, Language.C)
 
-    Parameters
-    ----------
-    ir_file_path : str
-        The path to the IR file
-    source_file_extension : str, default="c"
-        The extension of the source file, now support c, cpp and cxx
-
-    Returns
-    -------
-    ret : list
-        A list of .dot files for each function name
-
-    """
-    if not os.path.exists(ir_file_path):
-        print("File does not exist")
-        return None
-    if source_file_extension == "c":
-        function_pattern_c = re.compile(r"define\s+\w+\s+@(\w+)\s*\(")
-    if source_file_extension in ["cpp", "cxx"]:
-        pattern = (
-            r"""define\s+(?:(?:internal|private|available_externally|linkonce"""
-            r"""|weak|common|appending|extern_weak|linkonce_odr|weak_odr|external)"""
-            r"""\s+)?(?:(?:dso_local|dso_preemptable)\s+)?(?:\w+\s+)*@([\w$.]+)\s*\("""
-            r"""[^)]*\)(?:\s*(?:#\d+|![^\n]+|\{\s*[^}]*\}|\[[^\]]+\]|\w+\s*\([^)]*\)))*"""
-        )
-        function_pattern_c = re.compile(pattern)
-    if source_file_extension == "py":
-        function_pattern_c = re.compile(r"define\s+\w+\s+@(\w+)\s*\(")
-    with open(ir_file_path) as ir_file:
-        content = ir_file.read()
-        functions = function_pattern_c.findall(content)
-    return [f".{fname}.dot" for fname in functions]
-
-
-def extract_cfg_from_ir(ir_file_path, file_option="png", source_file_extension="c"):
-    """Extract CFG from IR file.
-
-    The function extracts CFG from the IR file and saves the CFG in .dot files
-    in a directory named after the IR file. The function also creates a directory
-    to store the .dot files. The .dot files are then converted to .png or .pdf
-    files based on the file_option.
-
-    Parameters
-    ----------
-    ir_file_path : str
-        The path to the IR file
-    file_option : str, default="png"
-        The file format to save the CFG, either "png" or "pdf"
-    source_file_extension : str, default="c"
-        The extension of the source file, now support c, cpp and cxx
-
-    Returns
-    -------
-    ret : list
-        A list of .dot files for each function name
-    """
-    if not os.path.exists(ir_file_path):
-        print("File does not exist")
-        return
-
-    # Use the full path to the IR file
-    cmd = ["opt", "-passes=dot-cfg", "-disable-output", ir_file_path]
-
+    # Run opt — .dot files land in cwd
+    original_cwd = Path.cwd()
     try:
-        process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-        )
-        _, stderr = process.communicate()
+        _run_opt(ir_path)
+    finally:
+        os.chdir(original_cwd)
 
-        if stderr and not all("Writing" in line for line in stderr.splitlines()):
-            print("Error:", stderr)
-            return
+    # Set up output directories
+    cfg_dir = ir_path.parent / f"{ir_path.stem}_cfg"
+    output_dir = cfg_dir / f"{output_format}s"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    except Exception as e:
-        print(f"Exception occurred: {e}")
-        return
+    # Find expected .dot files based on function names
+    function_names = get_function_names(ir_path, language)
+    expected_dots = {f".{name}.dot" for name in function_names}
 
-    try:
-        # Use the full path to the directory
-        cfg_dir_name = os.path.basename(ir_file_path).split(".")[0] + "_cfg"
-        cfg_files_dir = os.path.join(os.path.dirname(ir_file_path), cfg_dir_name)
-        if file_option == "png":
-            final_cfg_files_dir = os.path.join(cfg_files_dir, "images")
-        else:
-            final_cfg_files_dir = os.path.join(cfg_files_dir, "pdfs")
+    outputs: list[Path] = []
+    cwd = Path.cwd()
 
-        os.makedirs(cfg_files_dir, exist_ok=True)
-        os.makedirs(final_cfg_files_dir, exist_ok=True)
-        # move .dot file from function names to cfg_files_dir
-        function_names = get_function_names_for_dot_cfg(
-            ir_file_path, source_file_extension=source_file_extension
-        )
-        for file in os.listdir(os.getcwd()):
-            if os.path.basename(file) in function_names:
-                dot_file = os.path.join(cfg_files_dir, file)
-                os.rename(file, dot_file)
-                convert_cfg_to_png_pdf(final_cfg_files_dir, dot_file, file_option)
+    for item in cwd.iterdir():
+        if item.name in expected_dots:
+            # Move .dot into cfg directory
+            dest_dot = cfg_dir / item.name
+            item.rename(dest_dot)
 
-    except Exception as e:
-        print(f"Exception occurred: {e}")
-        return
-    return
+            # Convert to output format
+            result = _convert_dot(dest_dot, output_dir, output_format)
+            if result is not None:
+                outputs.append(result)
+
+    logger.info(
+        "Generated %d CFG %s files in %s",
+        len(outputs),
+        output_format.upper(),
+        output_dir,
+    )
+    return outputs
 
 
-def convert_cfg_to_png_pdf(final_cfg_files_dir, dot_file, file_option="png"):
-    """Convert .dot files to .png or .pdf files.
-
-    The function converts the .dot files to .png or .pdf files based on the
-    file_option.
-
-    Parameters
-    ----------
-    final_cfg_files_dir : str
-        The path to the directory to save the .png or .pdf files
-    dot_file : str
-        The path to the .dot file
-    file_option : str, default="png"
-        The file format to save the CFG, either "png" or "pdf"
-
-    Returns
-    -------
-    None
-    """
-    try:
-        if file_option == "png":
-            png_file = os.path.join(
-                final_cfg_files_dir, dot_file.split(".")[1] + ".png"
-            )
-            cmd = ["dot", "-Tpng", dot_file, "-o", png_file]
-            process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-            )
-            stdout_convert, stderr_convert = process.communicate()
-            if stderr_convert:
-                print("Error converting .dot to .png", stderr_convert)
-                return
-        else:
-            pdf_file = os.path.join(
-                final_cfg_files_dir, dot_file.split(".")[1] + ".pdf"
-            )
-            cmd = ["dot", "-Tpdf", dot_file, "-o", pdf_file]
-            process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-            )
-            _, stderr_convert = process.communicate()
-            if stderr_convert:
-                print("Error converting .dot to .png", stderr_convert)
-                return
-    except Exception as e:
-        print(f"Exception occurred: {e}")
-        return
-
-
-__all__ = ["extract_ir", "extract_cfg_from_ir"]
+__all__ = [
+    "Language",
+    "IRResult",
+    "extract_ir",
+    "extract_cfg_from_ir",
+    "get_function_names",
+]
