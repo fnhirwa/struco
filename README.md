@@ -7,10 +7,9 @@ The extracted CFG can be visualized as PDF or PNG files.
 ## Running the program
 
 ```bash
-python3 main.py <source_file> --cfg_format <cfg_output_file_format>
+python -m struco <file_path> [--cfg_format png|pdf] [-v]
 ```
 
 ## Contributors
 
 - [Felix Hirwa Nshuti](https://github.com/fnhirwa)
-- [Mellisa A. Gblinwon](https://github.com/MELISSAGBLINWON)

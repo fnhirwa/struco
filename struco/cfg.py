@@ -222,6 +222,33 @@ _FUNC_PATTERN_CPP = re.compile(
 )
 
 
+# Patterns for C++ stdlib / compiler-internal mangled names to exclude from CFGs
+_CPP_STDLIB_PREFIXES = (
+    "_ZNSt",     # std:: namespace members
+    "_ZNKSt",    # const std:: namespace members
+    "_ZSt",      # std:: free functions
+    "_ZTI",      # typeinfo
+    "_ZTS",      # typeinfo name
+    "_ZTV",      # vtable
+    "_ZThn",     # thunks
+    "_ZN9__gnu_cxx",  # __gnu_cxx:: namespace
+)
+
+_CPP_INTERNAL_NAMES = {
+    "__clang_call_terminate",
+    "__cxx_global_var_init",
+    "__cxa_atexit",
+    "_GLOBAL__sub_I_",
+}
+
+
+def _is_cpp_internal_function(name: str) -> bool:
+    """Return True if the function name belongs to the C++ stdlib or compiler internals."""
+    if any(name.startswith(prefix) for prefix in _CPP_STDLIB_PREFIXES):
+        return True
+    return any(name.startswith(internal) for internal in _CPP_INTERNAL_NAMES)
+
+
 def _get_function_pattern(language: Language) -> re.Pattern[str]:
     """Return the regex pattern for function definitions in the given language's IR."""
     if language in {Language.CPP, Language.CXX}:
@@ -256,6 +283,17 @@ def get_function_names(ir_path: Path, language: Language) -> list[str]:
     pattern = _get_function_pattern(language)
     content = ir_path.read_text()
     functions = pattern.findall(content)
+
+    if language in {Language.CPP, Language.CXX}:
+        filtered = [f for f in functions if not _is_cpp_internal_function(f)]
+        logger.info(
+            "Found %d functions (%d user-defined) in %s",
+            len(functions),
+            len(filtered),
+            ir_path.name,
+        )
+        return filtered
+
     logger.info("Found %d functions in %s", len(functions), ir_path.name)
     return functions
 
@@ -407,15 +445,19 @@ def extract_cfg_from_ir(
     cwd = Path.cwd()
 
     for item in cwd.iterdir():
-        if item.name in expected_dots:
-            # Move .dot into cfg directory
-            dest_dot = cfg_dir / item.name
-            item.rename(dest_dot)
+        if item.suffix == ".dot" and item.name.startswith("."):
+            if item.name in expected_dots:
+                # Move .dot into cfg directory
+                dest_dot = cfg_dir / item.name
+                item.rename(dest_dot)
 
-            # Convert to output format
-            result = _convert_dot(dest_dot, output_dir, output_format)
-            if result is not None:
-                outputs.append(result)
+                # Convert to output format
+                result = _convert_dot(dest_dot, output_dir, output_format)
+                if result is not None:
+                    outputs.append(result)
+            else:
+                # Remove leftover .dot files (e.g. stdlib/internal functions)
+                item.unlink()
 
     logger.info(
         "Generated %d CFG %s files in %s",
